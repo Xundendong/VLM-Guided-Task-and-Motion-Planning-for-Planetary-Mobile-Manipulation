@@ -331,7 +331,7 @@ robots_settings:
       #usd_path: assets/USD_Assets/robots/jackal_franka_new.usd # 确保这里是你自己做的模型路径
       usd_path: assets/USD_Assets/robots/jackal_ur3_423.usd
       pose:
-        position: [4.557, 6.250, 0.230]  # Z轴用你测出来的完美贴地高度
+        position: [4.557, 5.250, 0.120]  # Z轴用你测出来的完美贴地高度
         orientation: [1, 0.0, 0, 0.0]
       domain_id: 0
       # 【核心修改】在所有轮子和 base_link 前面加上 jackal/
