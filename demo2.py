@@ -637,25 +637,67 @@ def run(cfg: DictConfig):
                                 # 获取极其精准的 3D 深度 (来自物理深度相机)
                                 x3d, y3d, z3d = dino_tracker._get_3d_coordinates(rgb_img, g_box)
                                 my_print(f"🔒 [静默追踪] X={x3d:.3f}m, Y={y3d:.3f}m, 深度Z={z3d:.3f}m")
+
+                                # ==========================================
+                                # 🚨
+                                # ==========================================
+                                if z3d < 0.40:
+                                    # 如果深度小于 0.4 米，大概率是框到了车头或者石头已经钻进盲区！
+                                    my_print(f"⚠️ [警告] 深度极度异常(Z={z3d:.3f}m)，目标可能进入盲区或发生幻觉！强制制动！")
+                                    for prim in wheel_prims:
+                                        drive = UsdPhysics.DriveAPI.Get(prim, "angular")
+                                        drive.GetTargetVelocityAttr().Set(0.0)
+                                        drive.GetDampingAttr().Set(100000.0)
+                                    final_cam_pos = np.array([x3d, y3d, z3d])
+                                    ROBOT_STATE = "ARRIVED"
+                                    continue # 直接跳入下一次循环，不再执行下面的代码
                                 
                                 # ==========================================
                                 # 🛑 核心分支 A：到达黄金抓取区，准备交接
                                 # ==========================================
-                                TARGET_Z_MIN = 0.35  
-                                TARGET_Z_MAX = 0.65  
-                                TARGET_X_TOL = 0.25  
+                                TARGET_Z_MIN = 0.65  
+                                TARGET_Z_MAX = 0.85  
                                 
-                                if TARGET_Z_MIN < z3d < TARGET_Z_MAX and abs(x3d) < TARGET_X_TOL:
-                                    my_print("\n🛑 [到达工作空间] 目标已进入黄金抓取区！底盘紧急制动！")
-                                    # 底盘电机归零，强制刹车锁死并加阻尼防溜车
-                                    for prim in wheel_prims:
-                                        drive = UsdPhysics.DriveAPI.Get(prim, "angular")
-                                        drive.GetTargetVelocityAttr().Set(0.0)
-                                        drive.GetDampingAttr().Set(100.0)
-                                    
-                                    # 保存最后时刻的相机相对坐标，交接状态机
-                                    final_cam_pos = np.array([x3d, y3d, z3d])
-                                    ROBOT_STATE = "ARRIVED"
+                                # 计算目标在画面中的像素偏差
+                                u_center = (g_box[0] + g_box[2]) / 2.0
+                                current_yaw_error = u_center - (img_w / 2.0)
+                                
+                                # 首先判断距离是否进入黄金区间
+                                if TARGET_Z_MIN < z3d < TARGET_Z_MAX:
+                                    # 其次判断是否严格居中 (像素偏差小于 40)
+                                    if abs(current_yaw_error) < 40:
+                                        my_print(f"\n🛑 [到达工作空间] 深度Z={z3d:.3f}m, 完美居中！底盘紧急制动！")
+                                        # 底盘电机归零，强制刹车锁死并加阻尼防溜车
+                                        for prim in wheel_prims:
+                                            drive = UsdPhysics.DriveAPI.Get(prim, "angular")
+                                            drive.GetTargetVelocityAttr().Set(0.0)
+                                            # 将阻尼设为极高值，防止在斜坡发生滑动
+                                            drive.GetDampingAttr().Set(1e12) 
+                                            drive.GetStiffnessAttr().Set(1e10)
+                                        
+                                        # 保存最后时刻的相机相对坐标，交接状态机
+                                        final_cam_pos = np.array([x3d, y3d, z3d])
+                                        ROBOT_STATE = "ARRIVED"
+                                    else:
+                                        # 距离达标但未对准：强制原地搓轮子微调，绝不前进
+                                        my_print(f"⚠️ [近距微调] 距离达标但未居中(偏差{current_yaw_error:.1f}px)，原地微调中...")
+                                        v_yaw = current_yaw_error * 0.15
+                                        if current_yaw_error > 0: 
+                                            v_yaw = max(18.0, min(v_yaw, 25.0))
+                                        else: 
+                                            v_yaw = min(-18.0, max(v_yaw, -25.0))
+                                        
+                                        # 🚨 [抗溜车补丁] 给一个向前的微小推力，抵消重力下滑！
+                                        v_crawl = -6.0  
+                                        
+                                        for prim in wheel_prims:
+                                            drive = UsdPhysics.DriveAPI.Get(prim, "angular")
+                                            drive.GetDampingAttr().Set(100.0)
+                                            # 左轮和右轮都叠加上这个向前的推力
+                                            if "left" in prim.GetName().lower(): 
+                                                drive.GetTargetVelocityAttr().Set(v_crawl + v_yaw)
+                                            else: 
+                                                drive.GetTargetVelocityAttr().Set(v_crawl - v_yaw)
                                     
                                 # ==========================================
                                 # 🚙 核心分支 B：未到达，静默追踪 (拒绝大模型干预)
@@ -690,7 +732,7 @@ def run(cfg: DictConfig):
                         from omni.isaac.core.utils.xforms import get_world_pose
                         
                         # 使用你挂载的深度相机的真实 Prim Path
-                        cam_prim_path = "/Robots/husky/jackal/base_link/mast_base/rsd455/RSD455/Camera_OmniVision_OV9782_Depth"
+                        cam_prim_path = "/Robots/husky/jackal/base_link/mast_base/rsd455/RSD455/Camera_Pseudo_Depth"
                         try:
                             # 获取相机在世界里的绝对位置
                             cam_world_pos, cam_world_quat = get_world_pose(cam_prim_path)
