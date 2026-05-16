@@ -29,6 +29,14 @@ run_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 LOG_DIR = os.path.join(os.getcwd(), "logs", f"mission_{run_time}")
 os.makedirs(LOG_DIR, exist_ok=True)
 log_file_path = os.path.join(LOG_DIR, "mission_record.log")
+custom_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+os.makedirs("logs", exist_ok=True)
+MY_PRIVATE_LOG = os.path.join("logs", f"vlm_cover_tracking_{custom_time}.txt")
+def my_print(message):
+    print(message) # 照常在终端显示
+    # 'a' 模式代表追加，绝对不覆盖！
+    with open(MY_PRIVATE_LOG, "a", encoding="utf-8") as f:
+        f.write(message + "\n")
 # ==========================================
 # 维度二：给日志接管器装上“过滤网”
 # ==========================================
@@ -143,7 +151,7 @@ class VLMAgent:
                 json_match = re.search(r'\{.*?\}', clean_text, re.DOTALL)
                 if json_match:
                     action_dict = json.loads(json_match.group())
-                    print(f"🧠 [VLM 空间推理]: {action_dict.get('reasoning', '无')}")
+                    my_print(f"🧠 [VLM 空间推理]: {action_dict.get('reasoning', '无')}")
                     
                     roi_box = action_dict.get("roi_box", [0.0, 0.0, 1.0, 1.0])
                     # 修复 Qwen-VL 7B 可能输出 0-1000 绝对坐标的问题
@@ -156,7 +164,7 @@ class VLMAgent:
                     return {"roi_box": roi_box, "target_prompt": target}
             return {"roi_box": [0.0, 0.0, 1.0, 1.0], "target_prompt": "the rock."}
         except Exception as e:
-            print(f"❌ [VLM 大脑异常]: {e}")
+            my_print(f"❌ [VLM 大脑异常]: {e}")
             return {"roi_box": [0.0, 0.0, 1.0, 1.0], "target_prompt": "the rock."}
 
     def verify_dino_box(self, rgb_image, box, target_prompt):
@@ -192,11 +200,11 @@ class VLMAgent:
                 if json_match:
                     res_dict = json.loads(json_match.group())
                     is_correct = res_dict.get("is_correct", False)
-                    print(f"⚖️ [VLM 裁判庭]: {res_dict.get('reasoning', '无')} -> 判决: {'✅ 通过' if is_correct else '❌ 驳回 (判定为干扰物)'}")
+                    my_print(f"⚖️ [VLM 裁判庭]: {res_dict.get('reasoning', '无')} -> 判决: {'✅ 通过' if is_correct else '❌ 驳回 (判定为干扰物)'}")
                     return is_correct
             return False
         except Exception as e:
-            print(f"⚠️ [VLM 裁判异常]: {e}")
+            my_print(f"⚠️ [VLM 裁判异常]: {e}")
             return False
 
 # ==========================================
@@ -214,7 +222,7 @@ class DinoTracker:
         self.server_url = "http://127.0.0.1:8000/dino_detect" 
         # ❌ 已删除 self.depth_url，不再使用 AI 脑补深度
         
-        print(f"✅ [小脑代理] DINO 鹰眼接口初始化完毕 (开启防抖记忆跟踪 & 物理测距)")
+        my_print(f"✅ [小脑代理] DINO 鹰眼接口初始化完毕 (开启防抖记忆跟踪 & 物理测距)")
         
         # ==========================================
         # 📷 核心硬件接入：挂载物理深度相机
@@ -243,31 +251,45 @@ class DinoTracker:
         u_center = (xmin + xmax) / 2.0
         error_yaw = u_center - (img_w / 2.0) 
         
-        # 💡 [微调] 稍微加回一点点转向灵敏度，解决慢吞吞的问题
-        self.Kp_yaw = 0.15
-        turn_vel = error_yaw * self.Kp_yaw if abs(error_yaw) > 15 else 0.0
-
+        # 💡 [恢复基础灵敏度]
+        self.Kp_yaw = 0.15 
+        
+        # =======================================================
+        # 🚨 [终极解法：暴力坦克掉头模式 (In-Place Tank Turn)]
+        # =======================================================
+        # 1. 只有极其微小的偏差，才允许边走边微调
+        if abs(error_yaw) < 20: 
+            turn_vel = 0.0
+        else: 
+            turn_vel = error_yaw * self.Kp_yaw
+            
         current_area = (xmax - xmin) * (ymax - ymin)
         error_dist = self.target_area - current_area
-        # 💡 [微调] 略微提升基础推力系数
         base_forward_vel = max(0.0, min(error_dist * 0.0025, 30.0)) 
 
-        # =======================================================
-        # 🚨 [逻辑疏通] 更加丝滑的偏航惩罚
-        # =======================================================
-        if abs(error_yaw) > 200:
-            # 只有极其偏的时候才原地踏步
+        # 2. 极其严苛的对准逻辑
+        if abs(error_yaw) > 100:  # 💡 阈值收紧到 100 像素！
+            # 绝对不允许往前走一毫米！
             forward_vel = 0.0    
-            print(f"🔄 [原地对准] 偏差 {error_yaw:.1f}px, 暂停前进")
-        elif abs(error_yaw) > 80:
-            # 中等偏差，允许以 40% 的速度慢慢推进
-            forward_vel = base_forward_vel * 0.4 
+            
+            # 🚨 核心爆发力：强行赋予能撕裂月壤摩擦力的起步扭矩！
+            # 之前 18 不够，我们直接给到 50！
+            min_breakout_turn = 50.0 if error_yaw > 0 else -50.0
+            if abs(turn_vel) < abs(min_breakout_turn):
+                turn_vel = min_breakout_turn
+                
+            my_print(f"🔄 [坦克掉头] 偏差 {error_yaw:.1f}px, 满功率原地转向中...")
+            
+        elif abs(error_yaw) > 40:
+            # 轻微偏差，降速 70%，边走边小心微调
+            forward_vel = base_forward_vel * 0.3 
+            my_print(f"🔄 [边走边调] 偏差 {error_yaw:.1f}px...")
         else:
-            # 80像素以内，认为已经对得不错了，全速冲刺！
+            # 准星重合，全速突击！
             forward_vel = base_forward_vel
             
-        # 物理限幅：转向上限维持 12-15 即可，保证画面不晃
-        turn_vel = max(-15.0, min(turn_vel, 15.0))      
+        # 💡 释放野兽：转向限幅拉满到 80！
+        turn_vel = max(-80.0, min(turn_vel, 80.0))      
         
         return forward_vel, turn_vel, error_yaw
 
@@ -323,7 +345,7 @@ class DinoTracker:
                     y_c = (v - self.cy) * z_c / self.fy
                     return x_c, y_c, z_c
         except Exception as e:
-            print(f"⚠️ [硬件测距异常]: {e}")
+            my_print(f"⚠️ [硬件测距异常]: {e}")
         return 0.0, 0.0, 0.0
 
     def track_with_vlm_roi(self, rgb_image, vlm_task_dict, vlm_brain):
@@ -353,21 +375,22 @@ class DinoTracker:
                     
                     # 只有当这是第一次锁定目标时（没有记忆），才呼叫 VLM 进行重度审批，省算力！
                     if not self.last_u:
-                        print(f"👀 首次发现目标，提交 VLM 审批...")
+                        my_print(f"👀 首次发现目标，提交 VLM 审批...")
+                        
                         if not vlm_brain.verify_dino_box(rgb_image, g_box, target_prompt):
                             self.last_u, self.last_v = None, None # 审批失败，清除记忆
                             return 0.0, 15.0 # 强制转圈
                     
                     # 调用改写后的物理测距
                     x3d, y3d, z3d = self._get_3d_coordinates(rgb_image, g_box)
-                    print(f"📍 [稳定锁定] X={x3d:.3f}m, Y={y3d:.3f}m, 物理深度Z={z3d:.3f}m")
+                    my_print(f"📍 [稳定锁定] X={x3d:.3f}m, Y={y3d:.3f}m, 物理深度Z={z3d:.3f}m")
                     
                     forward_vel, turn_vel, error_yaw = self._calc_pid(g_box, img_w)
                     return forward_vel, turn_vel
             except Exception: pass
 
         # 🔴 方案 B：全局盲扫
-        print(f"🔄 [丢失目标] 记忆清空，全局重新寻找: [{target_prompt}]")
+        my_print(f"🔄 [丢失目标] 记忆清空，全局重新寻找: [{target_prompt}]")
         self.last_u, self.last_v = None, None # 一旦进入盲扫，必须清除旧记忆
         try:
             res_global = requests.post(self.server_url, json={"image_base64": self._encode_image(rgb_image), "text_prompt": target_prompt}, timeout=5).json()
@@ -375,11 +398,11 @@ class DinoTracker:
                 g_boxes = res_global["boxes"]
                 g_box = self._find_best_box_by_memory(g_boxes)
                 
-                print(f"👀 全局扫描发现目标，提交 VLM 审批...")
+                my_print(f"👀 全局扫描发现目标，提交 VLM 审批...")
                 if vlm_brain.verify_dino_box(rgb_image, g_box, target_prompt):
                     # 调用改写后的物理测距
                     x3d, y3d, z3d = self._get_3d_coordinates(rgb_image, g_box)
-                    print(f"📍 [全局稳定锁定] X={x3d:.3f}m, Y={y3d:.3f}m, 物理深度Z={z3d:.3f}m")
+                    my_print(f"📍 [全局稳定锁定] X={x3d:.3f}m, Y={y3d:.3f}m, 物理深度Z={z3d:.3f}m")
                     forward_vel, turn_vel, error_yaw = self._calc_pid(g_box, img_w)
                     return forward_vel, turn_vel
                 else:
@@ -396,7 +419,7 @@ def run(cfg: DictConfig):
     cfg_container = OmegaConf.to_container(cfg, resolve=True)
     cfg_inst = instantiateConfigs(cfg_container)
     
-    print("\n⏳ Isaac Sim 物理引擎启动中...\n")
+    my_print("\n⏳ Isaac Sim 物理引擎启动中...\n")
     SM, simulation_app = startSim(cfg_inst)
 
     logging.getLogger("omni.physx.plugin").setLevel(logging.ERROR)
@@ -466,7 +489,7 @@ def run(cfg: DictConfig):
     depth_cam.initialize()
     depth_cam.set_resolution((640,480))
     depth_cam.add_distance_to_image_plane_to_frame()
-    print("深度相机已经挂载")
+    my_print("深度相机已经挂载")
     
     # ========================================================
     # 🎯 5. 不穿模月岩加载
@@ -544,12 +567,12 @@ def run(cfg: DictConfig):
                             for prim in wheel_prims:
                                 UsdPhysics.DriveAPI.Get(prim, "angular").GetTargetVelocityAttr().Set(0.0)
 
-                        print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 [状态: SEARCHING] 原地停车，启动 VLM+DINO 级联搜索...")
+                        my_print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 [状态: SEARCHING] 原地停车，启动 VLM+DINO 级联搜索...")
                         task_dict = vlm_brain.extract_target_prompt(rgb_img, base_instruction)
                         
                         if task_dict:
                             target_prompt = task_dict.get('target_prompt', 'rock.')
-                            print(f"🎯 VLM 锁定目标特征: {target_prompt}，正在呼叫 DINO 执行全局 Set-of-Mark...")
+                            my_print(f"🎯 VLM 锁定目标特征: {target_prompt}，正在呼叫 DINO 执行全局 Set-of-Mark...")
                             
                             # 强制进行一次全局搜索并让 VLM 裁判拍板
                             res_global = requests.post(dino_tracker.server_url, json={"image_base64": dino_tracker._encode_image(rgb_img), "text_prompt": target_prompt}, timeout=5).json()
@@ -558,13 +581,13 @@ def run(cfg: DictConfig):
                                 # DINO 可能返回了多个框，我们用记忆系统挑出最好的，或者直接让 VLM 裁决第一个
                                 best_box = dino_tracker._find_best_box_by_memory(res_global["boxes"])
                                 
-                                print("⚖️ 提交 VLM 裁判庭进行最终目标确认 (EQA 拍板)...")
+                                my_print("⚖️ 提交 VLM 裁判庭进行最终目标确认 (EQA 拍板)...")
                                 if vlm_brain.verify_dino_box(rgb_img, best_box, target_prompt):
-                                    print("✅ [EQA 确认通过] 目标已绝对锁死！VLM 进入休眠，移交底盘控制权！")
+                                    my_print("✅ [EQA 确认通过] 目标已绝对锁死！VLM 进入休眠，移交底盘控制权！")
                                     locked_roi_box = best_box
                                     ROBOT_STATE = "TRACKING" # 🔴 状态切换！
                                 else:
-                                    print("❌ [EQA 驳回] 裁判认为不是目标！继续搜索...")
+                                    my_print("❌ [EQA 驳回] 裁判认为不是目标！继续搜索...")
                                     # 控制底盘原地轻微旋转继续找
                                     if len(wheel_prims) > 0:
                                         for prim in wheel_prims:
@@ -577,8 +600,8 @@ def run(cfg: DictConfig):
                     # ====================================================
                     elif ROBOT_STATE == "TRACKING":
                         # 1. 提取局部视野 (Local ROI)
-                        margin_x = int((locked_roi_box[2] - locked_roi_box[0]) * 0.3)
-                        margin_y = int((locked_roi_box[3] - locked_roi_box[1]) * 0.3)
+                        margin_x = int((locked_roi_box[2] - locked_roi_box[0]) * 0.8)
+                        margin_y = int((locked_roi_box[3] - locked_roi_box[1]) * 0.8)
                         
                         c_xmin = max(0, int(locked_roi_box[0]) - margin_x)
                         c_ymin = max(0, int(locked_roi_box[1]) - margin_y)
@@ -608,12 +631,12 @@ def run(cfg: DictConfig):
                                     # 保存到你运行 demo2.py 的目录下
                                     debug_pil.save("debug_full_view.jpg")
                                 except Exception as e:
-                                    print(f"全图Debug保存失败: {e}")
+                                    my_print(f"全图Debug保存失败: {e}")
                                 locked_roi_box = g_box 
                                 
                                 # 获取极其精准的 3D 深度 (来自物理深度相机)
                                 x3d, y3d, z3d = dino_tracker._get_3d_coordinates(rgb_img, g_box)
-                                print(f"🔒 [静默追踪] X={x3d:.3f}m, Y={y3d:.3f}m, 深度Z={z3d:.3f}m")
+                                my_print(f"🔒 [静默追踪] X={x3d:.3f}m, Y={y3d:.3f}m, 深度Z={z3d:.3f}m")
                                 
                                 # ==========================================
                                 # 🛑 核心分支 A：到达黄金抓取区，准备交接
@@ -623,7 +646,7 @@ def run(cfg: DictConfig):
                                 TARGET_X_TOL = 0.25  
                                 
                                 if TARGET_Z_MIN < z3d < TARGET_Z_MAX and abs(x3d) < TARGET_X_TOL:
-                                    print("\n🛑 [到达工作空间] 目标已进入黄金抓取区！底盘紧急制动！")
+                                    my_print("\n🛑 [到达工作空间] 目标已进入黄金抓取区！底盘紧急制动！")
                                     # 底盘电机归零，强制刹车锁死并加阻尼防溜车
                                     for prim in wheel_prims:
                                         drive = UsdPhysics.DriveAPI.Get(prim, "angular")
@@ -655,11 +678,11 @@ def run(cfg: DictConfig):
                                     # 🗑️ [已删除] 彻底移除了 VLM 抽查，让底盘专心干活！
                                             
                             else:
-                                print("⚠️ 局部视野丢失目标！退回全局搜索模式重新确认。")
+                                my_print("⚠️ 局部视野丢失目标！退回全局搜索模式重新确认。")
                                 ROBOT_STATE = "SEARCHING"
                                 dino_tracker.last_u, dino_tracker.last_v = None, None
                         except Exception as e:
-                            print(f"Tracking Error: {e}")
+                            my_print(f"Tracking Error: {e}")
                     # ====================================================
                     # 🎯 状态 3: 到达交接 (解算绝对坐标，等待外部模型接管)
                     # ====================================================
@@ -678,17 +701,17 @@ def run(cfg: DictConfig):
                             # 仿射变换：计算石头在 Isaac Sim 里的上帝视角(世界)坐标
                             target_world_pos = r_matrix.apply(final_cam_pos) + cam_world_pos
                             
-                            print("\n" + "="*50)
-                            print(f"📡 [系统交接] 底盘导航任务完美结束！")
-                            print(f"🎯 目标的绝对世界坐标为: X={target_world_pos[0]:.3f}, Y={target_world_pos[1]:.3f}, Z={target_world_pos[2]:.3f}")
-                            print(f"⏸️ 底盘已休眠。请唤醒您的【抓取模型】接管机械臂！")
-                            print("="*50 + "\n")
+                            my_print("\n" + "="*50)
+                            my_print(f"📡 [系统交接] 底盘导航任务完美结束！")
+                            my_print(f"🎯 目标的绝对世界坐标为: X={target_world_pos[0]:.3f}, Y={target_world_pos[1]:.3f}, Z={target_world_pos[2]:.3f}")
+                            my_print(f"⏸️ 底盘已休眠。请唤醒您的【抓取模型】接管机械臂！")
+                            my_print("="*50 + "\n")
                             
                             # 切换到 DONE 状态，保持底盘锁死
                             ROBOT_STATE = "DONE"
                                 
                         except Exception as e:
-                            print(f"❌ 交接坐标系转换失败: {e}")
+                            my_print(f"❌ 交接坐标系转换失败: {e}")
                             ROBOT_STATE = "DONE"
 
                     # ====================================================
