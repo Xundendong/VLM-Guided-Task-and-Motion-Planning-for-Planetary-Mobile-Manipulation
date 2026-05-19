@@ -121,10 +121,6 @@ This project is licensed under the BSD-3-Clause License - see the [LICENSE](http
 
 
 
-> **Academic Note**: Developed in collaboration for high-fidelity space robotics bench manipulation challenges. Special acknowledgments to the Space Robotics Bench assets pipeline.
-
-
-
 ### 遥操作运行命令
 ```
 ~/isaacsim/python.sh run.py environment=lunaryard_20m
