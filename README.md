@@ -97,22 +97,7 @@ System behaviors can be fine-tuned via Hydra configurations under `cfg/config.ya
 * `target_area`: Desired bounding box size defining the proximity threshold (Default: `15000`).
 
 
-### 🛡️ Anti-Slip Technical Implementation Details
 
-When navigating craters with extreme incline profiles, traditional velocity control ($V=0$) introduces steady-state creeping due to gravity vector projection and PhysX solver iterations. FEEA-Nav circumvents this limitation entirely inside the `DONE` state loop:
-
-```python
-elif ROBOT_STATE == "DONE":
-    if locked_base_pos is not None:
-        # 1. Teleport the robot chassis back to the handover snapshot coordinates
-        my_robot.set_world_pose(position=locked_base_pos, orientation=locked_base_ori)
-        # 2. Re-align wheel joints to stop rotational slipping
-        my_robot.set_joint_positions(locked_wheel_pos)
-        # 3. Kill residual accumulated kinetic energy
-        my_robot.set_linear_velocity(np.zeros(3))
-        my_robot.set_angular_velocity(np.zeros(3))
-
-```
 
 
 ### 📄 License
