@@ -1,4 +1,4 @@
-# VLM-Guided-Task-and-Motion-Planning-for-Planetary-Mobile-Manipulation
+# Fallback-enabled VLM-guided embodied TAMP framework for planetary mobile manipulation
 <center>
 <img src="spacelrs.png" width=250/>
 </center>
