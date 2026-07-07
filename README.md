@@ -50,6 +50,16 @@ This repository is built and tested on **NVIDIA Isaac Sim (4.5.0)** running on U
 
 
 2. Ensure your local VLM/DINO serving stack is active at `http://127.0.0.1:8000`.
+3. anygrasp
+```bash
+
+  conda activate ript_vla
+
+  export LD_LIBRARY_PATH="/home/xunden/isaacsim/exts/isaacsim.ros2.bridge/humble/lib:${LD_LIBRARY_PATH}"
+
+  python anygrasp_rpc_server.py
+
+```
 
 
 
